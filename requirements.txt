@@ -1,0 +1,13 @@
+# --- CORE ---
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic==1.10.13      # más compatible, evita errores de migración
+python-multipart
+requests
+
+# --- STREAMLIT ---
+streamlit
+
+# --- OTRAS DEPENDENCIAS ---
+jinja2

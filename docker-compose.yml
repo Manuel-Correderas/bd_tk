@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: personas_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data    # opcional si después querés guardar cosas
+    # Para que SQLite quede en un lugar fijo, podés ajustar DATABASE_URL en backend.py si querés.
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: personas_frontend
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    environment:
+      - BACKEND_URL=http://backend:8000

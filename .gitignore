@@ -1,0 +1,50 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.pyi
+*.mypy_cache/
+*.pytest_cache/
+*.ruff_cache/
+
+# --- Entornos virtuales ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Streamlit ---
+.streamlit/
+# archivos de sesión
+*.log
+
+# --- SQLite databases ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Docker ---
+*.tar
+.dockerignore
+
+# --- VSCode ---
+.vscode/
+
+# --- PyCharm ---
+.idea/
+
+# --- Archivos del sistema ---
+.DS_Store
+Thumbs.db
+
+# --- Builds ---
+build/
+dist/
+*.egg-info/
+
+# --- Archivos temporales ---
+*.tmp
+*.bak
+*~
