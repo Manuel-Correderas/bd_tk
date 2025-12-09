@@ -2,27 +2,25 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instalamos dependencias del sistema
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Dependencias del sistema (para compilar algunas libs)
+RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
 
 # Copiamos requirements e instalamos
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiamos el código
+# Copiamos código
 COPY backend.py .
 COPY app_streamlit.py .
 
-# Streamlit expone el servicio web
-EXPOSE 8501
+# 👉 Ahora el backend escucha en 8001 y Streamlit en 8000
+# Streamlit será el puerto "público"
+ENV BACKEND_URL=http://localhost:8001
 
-# Backend para uso interno dentro del contenedor
-ENV BACKEND_URL=http://localhost:8000
+# Render va a exponer este puerto
+EXPOSE 8000
 
-# Levanta FastAPI y Streamlit juntos
 CMD ["bash", "-c", "\
-uvicorn backend:app --host 0.0.0.0 --port 8000 & \
-streamlit run app_streamlit.py --server.address=0.0.0.0 --server.port=8501 \
+uvicorn backend:app --host 0.0.0.0 --port 8001 & \
+streamlit run app_streamlit.py --server.address=0.0.0.0 --server.port=8000 \
 "]
