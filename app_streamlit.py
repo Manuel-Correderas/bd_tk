@@ -1,15 +1,43 @@
 # app_streamlit.py
 import os
+import pandas as pd
 import requests
 import streamlit as st
 
-# El backend se toma de ENV, y si no existe, usa localhost para desarrollo
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+# =========================
+# CONFIG
+# =========================
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 st.set_page_config(page_title="CRUD Personas + Observaciones", layout="wide")
 
 if "token" not in st.session_state:
     st.session_state["token"] = None
+
+if "page" not in st.session_state:
+    st.session_state["page"] = 0
+
+PAGE_SIZE = 50  # paginado tabla
+
+
+# =========================
+# HELPERS HTTP
+# =========================
+def auth_headers():
+    return {"x-token": st.session_state["token"]} if st.session_state["token"] else {}
+
+
+def safe_json(resp: requests.Response):
+    try:
+        return resp.json()
+    except Exception:
+        return None
+
+
+def show_http_error(resp: requests.Response, default_msg="Error"):
+    data = safe_json(resp) or {}
+    detail = data.get("detail") if isinstance(data, dict) else None
+    st.error(detail or f"{default_msg}: {resp.status_code} - {resp.text}")
 
 
 # =========================
@@ -17,6 +45,7 @@ if "token" not in st.session_state:
 # =========================
 def do_login():
     st.title("Login")
+
     username = st.text_input("Usuario")
     password = st.text_input("Contraseña", type="password")
 
@@ -29,35 +58,18 @@ def do_login():
             r = requests.post(
                 f"{BACKEND_URL}/login",
                 json={"username": username, "password": password},
-                timeout=5,
+                timeout=10,
             )
-
-            if r.status_code == 200:
-                data = r.json()
-                st.session_state["token"] = data["token"]
-                st.rerun()
-            else:
-                # Intentamos leer el mensaje de detalle del backend
-                detail = None
-                try:
-                    data = r.json()
-                    detail = data.get("detail")
-                except Exception:
-                    detail = None
-
-                if r.status_code == 429 and detail:
-                    # 429 = demasiados intentos: backend manda mensaje con mail
-                    st.error(detail)
-                elif detail:
-                    st.error(detail)
-                else:
-                    st.error("Error en el login. Revise usuario/contraseña.")
         except Exception as e:
             st.error(f"Error al conectar con backend: {e}")
+            return
 
-
-def auth_headers():
-    return {"x-token": st.session_state["token"]}
+        if r.status_code == 200:
+            data = safe_json(r) or {}
+            st.session_state["token"] = data.get("token")
+            st.rerun()
+        else:
+            show_http_error(r, "Login fallido")
 
 
 # =========================
@@ -65,10 +77,7 @@ def auth_headers():
 # =========================
 def main_app():
     st.sidebar.title("Menú")
-    opcion = st.sidebar.radio(
-        "Opciones",
-        ["Personas", "Salir"]
-    )
+    opcion = st.sidebar.radio("Opciones", ["Personas", "Salir"])
 
     if opcion == "Salir":
         st.session_state["token"] = None
@@ -79,199 +88,253 @@ def main_app():
 
 
 def personas_view():
-    st.title("CRUD de Personas con DNI, Nacionalidad y Observaciones por Mes")
+    st.title("CRUD de Personas con DNI y Observaciones por Mes")
 
-    col1, col2 = st.columns(2)
+    tab1, tab2, tab3 = st.tabs(["📋 Listado", "👤 Crear/Editar", "📥 Importar"])
 
-    # ----- Alta / Edición -----
-    with col1:
-        st.subheader("Crear / Editar persona")
+    # =========================
+    # TAB 1: LISTADO + BUSCADOR + OBS
+    # =========================
+    with tab1:
+        st.subheader("Listado (paginado) y buscador")
 
-        modo = st.radio("Modo", ["Crear nueva", "Editar existente"])
+        q = st.text_input("Buscar por nombre, apellido o DNI", placeholder="Ej: Juan, Pérez, 30111222")
 
-        # Datos básicos
-        nombre = st.text_input("Nombre")
-        apellido = st.text_input("Apellido")
+        # Si hay búsqueda: usar endpoint search (rápido, sin traer todo)
+        if q.strip():
+            try:
+                resp = requests.get(
+                    f"{BACKEND_URL}/persons/search",
+                    headers=auth_headers(),
+                    params={"q": q.strip(), "limit": 50},
+                    timeout=20,
+                )
+            except Exception as e:
+                st.error(f"No se pudo conectar al backend: {e}")
+                return
 
-        # Nacionalidad (aunque el backend actual no la guarda, la dejamos en la UI)
-        nacionalidades = [
-            "Argentina", "Brasil", "Chile", "Uruguay", "Paraguay",
-            "Bolivia", "Perú", "Otro"
-        ]
-        nacionalidad = st.selectbox("Nacionalidad", nacionalidades, index=0)
+            if resp.status_code != 200:
+                show_http_error(resp, "No se pudo buscar")
+                return
 
-        # Varios DNIs (simple: lista separada por comas)
-        dnis_text = st.text_input("DNIs (separados por coma)", placeholder="12345678, 23456789")
-
-        if modo == "Crear nueva":
-            if st.button("Crear persona"):
-                dnis_list = [
-                    {"dni": dni.strip()}
-                    for dni in dnis_text.split(",")
-                    if dni.strip()
-                ]
-                if not nombre or not apellido:
-                    st.error("Nombre y apellido son obligatorios")
-                elif not dnis_list:
-                    st.error("Debe ingresar al menos un DNI")
-                else:
-                    r = requests.post(
-                        f"{BACKEND_URL}/persons",
-                        json={
-                            "nombre": nombre,
-                            "apellido": apellido,
-                            # el backend actual ignora 'nacionalidad' si no la tiene en el modelo
-                            "nacionalidad": nacionalidad,
-                            "dnis": dnis_list,
-                        },
-                        headers=auth_headers(),
-                    )
-                    if r.status_code == 201:
-                        st.success("Persona creada")
-                    else:
-                        st.error(f"Error: {r.text}")
+            persons = resp.json() or []
+            st.caption(f"Resultados: {len(persons)} (máx 50)")
         else:
-            # Edición: elegimos persona y actualizamos datos básicos + DNIs + nacionalidad
-            resp_personas = requests.get(
-                f"{BACKEND_URL}/persons", headers=auth_headers()
-            )
-            if resp_personas.status_code != 200:
-                st.error("No se pudo obtener el listado de personas")
-            else:
-                personas = resp_personas.json()
-                ids = {
-                    f"{p['id']} - {p['nombre']} {p['apellido']}": p["id"]
-                    for p in personas
-                }
-                if ids:
-                    seleccion = st.selectbox("Seleccionar persona", list(ids.keys()))
-                    person_id = ids[seleccion]
+            # Paginado normal
+            skip = st.session_state["page"] * PAGE_SIZE
+            try:
+                resp = requests.get(
+                    f"{BACKEND_URL}/persons",
+                    headers=auth_headers(),
+                    params={"skip": skip, "limit": PAGE_SIZE},
+                    timeout=20,
+                )
+            except Exception as e:
+                st.error(f"No se pudo conectar al backend: {e}")
+                return
 
-                    if st.button("Actualizar persona"):
-                        dnis_list = [
-                            {"dni": dni.strip()}
-                            for dni in dnis_text.split(",")
-                            if dni.strip()
-                        ]
-                        if not nombre or not apellido:
-                            st.error("Nombre y apellido son obligatorios")
-                        elif not dnis_list:
-                            st.error("Debe ingresar al menos un DNI")
-                        else:
-                            r = requests.put(
-                                f"{BACKEND_URL}/persons/{person_id}",
-                                json={
-                                    "nombre": nombre,
-                                    "apellido": apellido,
-                                    "nacionalidad": nacionalidad,
-                                    "dnis": dnis_list,
-                                },
-                                headers=auth_headers(),
-                            )
-                            if r.status_code == 200:
-                                st.success("Persona actualizada")
-                            else:
-                                st.error(f"Error: {r.text}")
-                else:
-                    st.info("No hay personas para editar.")
+            if resp.status_code != 200:
+                show_http_error(resp, "No se pudo obtener listado")
+                return
 
-    # ----- Listado + Observaciones -----
-    with col2:
-        st.subheader("Listado, Buscador y Observaciones")
+            persons = resp.json() or []
 
-        # 🔎 Buscador por nombre / apellido / DNI (el backend puede ignorar q si no lo implementaste)
-        search = st.text_input("Buscar persona (nombre, apellido o DNI)")
+            # Controles paginado
+            col_prev, col_mid, col_next = st.columns([1, 2, 1])
+            with col_prev:
+                if st.button("⬅ Anterior", disabled=(st.session_state["page"] == 0)):
+                    st.session_state["page"] -= 1
+                    st.rerun()
+            with col_mid:
+                st.caption(f"Página {st.session_state['page'] + 1} — mostrando {len(persons)} registros")
+            with col_next:
+                if st.button("Siguiente ➡", disabled=(len(persons) < PAGE_SIZE)):
+                    st.session_state["page"] += 1
+                    st.rerun()
 
-        params = {}
-        if search.strip():
-            params["q"] = search.strip()
-
-        try:
-            resp = requests.get(
-                f"{BACKEND_URL}/persons",
-                headers=auth_headers(),
-                params=params,
-                timeout=5,
-            )
-        except Exception as e:
-            st.error(f"No se pudo conectar al backend: {e}")
+        if not persons:
+            st.info("No hay resultados.")
             return
 
-        if resp.status_code != 200:
-            st.error("No se pudo obtener el listado de personas")
-            return
+        # Tabla resumen (liviana)
+        rows = []
+        for p in persons:
+            rows.append({
+                "ID": p["id"],
+                "Nombre": p["nombre"],
+                "Apellido": p["apellido"],
+                "Teléfono": p.get("telefono", "") or "",
+                "DNIs": ", ".join(d["dni"] for d in p.get("dnis", [])),
+            })
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
-        data = resp.json()
-        if not data:
-            st.info("Sin personas cargadas (o ninguna coincide con la búsqueda).")
-            return
+        st.divider()
+        st.subheader("Observaciones (abrí una persona)")
 
-        for p in data:
+        meses = {
+            1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+            5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+            9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+        }
+
+        # Expanders (solo para lo que ya trajimos: página actual o resultados búsqueda)
+        for p in persons:
             titulo = f"{p['nombre']} {p['apellido']} (ID {p['id']})"
-            if p.get("nacionalidad"):
-                titulo += f" - {p['nacionalidad']}"
             with st.expander(titulo):
-                st.write("**DNIs:**", ", ".join(d["dni"] for d in p["dnis"]))
-                if p.get("nacionalidad"):
-                    st.write("**Nacionalidad:**", p["nacionalidad"])
+                st.write("**DNIs:**", ", ".join(d["dni"] for d in p.get("dnis", [])))
+                st.write("**Teléfono:**", p.get("telefono", "") or "")
 
-                # Observaciones por mes
-                observaciones_por_mes = {
-                    o["month"]: o["text"] for o in p["observations"]
-                }
-                flags_por_mes = {
-                    o["month"]: o.get("flag", False) for o in p["observations"]
-                }
+                obs = p.get("observations", []) or []
+                obs_by_month = {o["month"]: o.get("text", "") for o in obs}
 
                 edited = []
-                meses = {
-                    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
-                    5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
-                    9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
-                }
-
-                st.write("### Observaciones por mes")
                 for m in range(1, 13):
+                    existing_text = (obs_by_month.get(m) or "").strip()
+                    default_checked = bool(existing_text)
+
                     c1m, c2m = st.columns([1, 3])
                     with c1m:
                         chk = st.checkbox(
                             f"{meses[m]} ✔",
-                            value=flags_por_mes.get(m, False),
+                            value=default_checked,
                             key=f"flag_{p['id']}_{m}",
                         )
                     with c2m:
                         txt = st.text_area(
                             f"Detalle {meses[m]}",
-                            value=observaciones_por_mes.get(m, ""),
-                            key=f"obs_{p['id']}_{m}"
+                            value=existing_text,
+                            key=f"obs_{p['id']}_{m}",
                         )
-                    # el backend actual solo usa month/text, flag se ignora (no rompe)
-                    edited.append({"month": m, "text": txt, "flag": chk})
 
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Guardar observaciones", key=f"save_obs_{p['id']}"):
+                    # regla: destildado y sin texto -> vacío
+                    final_text = "" if (not chk and not txt.strip()) else txt
+                    edited.append({"month": m, "text": final_text})
+
+                if st.button("Guardar observaciones", key=f"save_obs_{p['id']}"):
+                    try:
                         r = requests.put(
                             f"{BACKEND_URL}/persons/{p['id']}/observations",
                             json=edited,
                             headers=auth_headers(),
+                            timeout=20,
                         )
-                        if r.status_code == 200:
-                            st.success("Observaciones actualizadas")
-                        else:
-                            st.error(f"Error: {r.text}")
-                with c2:
-                    if st.button("Eliminar persona", key=f"del_{p['id']}"):
-                        r = requests.delete(
-                            f"{BACKEND_URL}/persons/{p['id']}",
-                            headers=auth_headers(),
-                        )
-                        if r.status_code == 204:
-                            st.warning("Persona eliminada")
-                            st.rerun()
-                        else:
-                            st.error(f"Error: {r.text}")
+                    except Exception as e:
+                        st.error(f"Error al conectar con backend: {e}")
+                        continue
 
+                    if r.status_code == 200:
+                        st.success("Observaciones actualizadas")
+                        st.rerun()
+                    else:
+                        show_http_error(r, "No se pudo guardar observaciones")
+
+    # =========================
+    # TAB 2: CREAR / EDITAR
+    # =========================
+    with tab2:
+        st.subheader("Crear o editar persona (sin cargar todo)")
+
+        modo = st.radio("Modo", ["Crear nueva", "Editar por ID"], horizontal=True)
+
+        nombre = st.text_input("Nombre", key="ce_nombre")
+        apellido = st.text_input("Apellido", key="ce_apellido")
+        telefono = st.text_input("Teléfono", key="ce_telefono")
+        dnis_text = st.text_input("DNIs (separados por coma)", key="ce_dnis", placeholder="12345678, 23456789")
+
+        dnis_list = [{"dni": dni.strip()} for dni in dnis_text.split(",") if dni.strip()]
+
+        if modo == "Crear nueva":
+            if st.button("Crear persona"):
+                if not nombre.strip() or not apellido.strip():
+                    st.error("Nombre y apellido son obligatorios")
+                elif not dnis_list:
+                    st.error("Debe ingresar al menos un DNI")
+                else:
+                    try:
+                        r = requests.post(
+                            f"{BACKEND_URL}/persons",
+                            json={
+                                "nombre": nombre.strip(),
+                                "apellido": apellido.strip(),
+                                "telefono": telefono.strip(),
+                                "dnis": dnis_list,
+                            },
+                            headers=auth_headers(),
+                            timeout=20,
+                        )
+                    except Exception as e:
+                        st.error(f"Error al conectar con backend: {e}")
+                        return
+
+                    if r.status_code in (200, 201):
+                        st.success("OK (creada o actualizada por DNI)")
+                        st.rerun()
+                    else:
+                        show_http_error(r, "No se pudo crear")
+
+        else:
+            person_id = st.number_input("ID de la persona", min_value=1, step=1)
+            if st.button("Actualizar persona"):
+                if not nombre.strip() or not apellido.strip():
+                    st.error("Nombre y apellido son obligatorios")
+                elif not dnis_list:
+                    st.error("Debe ingresar al menos un DNI")
+                else:
+                    try:
+                        r = requests.put(
+                            f"{BACKEND_URL}/persons/{int(person_id)}",
+                            json={
+                                "nombre": nombre.strip(),
+                                "apellido": apellido.strip(),
+                                "telefono": telefono.strip(),
+                                "dnis": dnis_list,
+                            },
+                            headers=auth_headers(),
+                            timeout=20,
+                        )
+                    except Exception as e:
+                        st.error(f"Error al conectar con backend: {e}")
+                        return
+
+                    if r.status_code == 200:
+                        st.success("Persona actualizada")
+                        st.rerun()
+                    else:
+                        show_http_error(r, "No se pudo actualizar")
+
+    # =========================
+    # TAB 3: IMPORTAR (archivo completo al backend)
+    # =========================
+    with tab3:
+        st.subheader("Importar personas (CSV o Excel) — rápido y sin cuelgues")
+
+        st.info(
+            "Subí el archivo y el backend se encarga de: crear nuevas por DNI y "
+            "actualizar existentes completando datos/meses sin duplicar."
+        )
+
+        up = st.file_uploader("Cargar archivo", type=["csv", "xls", "xlsx"])
+
+        if up is not None:
+            if st.button("Importar archivo"):
+                try:
+                    files = {"file": (up.name, up.getvalue(), up.type)}
+                    r = requests.post(
+                        f"{BACKEND_URL}/import-personas",
+                        headers=auth_headers(),
+                        files=files,
+                        timeout=120,  # import puede tardar
+                    )
+                except Exception as e:
+                    st.error(f"Error al conectar con backend: {e}")
+                    return
+
+                if r.status_code == 200:
+                    data = safe_json(r) or {}
+                    st.success(data.get("detail", "Importación OK"))
+                else:
+                    show_http_error(r, "Importación fallida")
 
 
 # =========================
