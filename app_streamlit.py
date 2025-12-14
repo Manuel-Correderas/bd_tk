@@ -41,27 +41,6 @@ def request_get(url, **kwargs):
 
 st.title("🏠 Personas — Inicio")
 
-with st.sidebar:
-    st.subheader("⚙️ Estado")
-    st.write("BACKEND_URL:", BACKEND_URL)
-    st.write("Token cargado:", bool(st.session_state.get("token")))
-
-    with st.expander("🛠 Debug", expanded=False):
-        if st.button("Probar /persons (1 fila)", key="dbg_persons"):
-            r = request_get(
-                f"{BACKEND_URL}/persons",
-                headers=auth_headers(),
-                params={"skip": 0, "limit": 1},
-                timeout=10,
-            )
-            if r is not None:
-                st.write("status:", r.status_code)
-                st.code((r.text or "")[:800])
-
-    if st.session_state.get("token"):
-        if st.button("Cerrar sesión", key="btn_logout"):
-            st.session_state["token"] = None
-            st.rerun()
 
 # LOGIN
 if not st.session_state.get("token"):
