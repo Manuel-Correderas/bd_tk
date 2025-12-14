@@ -2,25 +2,29 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Dependencias del sistema (para compilar algunas libs)
-RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
+# Mejoras runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    BACKEND_URL=http://127.0.0.1:8001
 
-# Copiamos requirements e instalamos
+# Dependencias del sistema (si tu requirements tiene wheels que compilan)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiamos código
+# Copiar proyecto
 COPY backend.py .
 COPY app_streamlit.py .
+COPY pages ./pages
+COPY personas.db .
+COPY .env .
 
-# 👉 Ahora el backend escucha en 8001 y Streamlit en 8000
-# Streamlit será el puerto "público"
-ENV BACKEND_URL=http://localhost:8001
+# Puertos
+EXPOSE 8501 8001
 
-# Render va a exponer este puerto
-EXPOSE 8000
-
-CMD ["bash", "-c", "\
-uvicorn backend:app --host 0.0.0.0 --port 8001 & \
-streamlit run app_streamlit.py --server.address=0.0.0.0 --server.port=8000 \
-"]
+# FastAPI + Streamlit (1 container)
+CMD ["bash", "-lc", "uvicorn backend:app --host 0.0.0.0 --port 8001 & streamlit run app_streamlit.py --server.address=0.0.0.0 --server.port=8501"]

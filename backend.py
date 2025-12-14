@@ -1,4 +1,3 @@
-# backend.py
 import os
 import io
 import time
@@ -7,6 +6,7 @@ from typing import List, Optional, Dict
 
 import pandas as pd
 from dotenv import load_dotenv
+
 from fastapi import (
     FastAPI,
     Depends,
@@ -19,7 +19,9 @@ from fastapi import (
     Query,
 )
 from fastapi.middleware.cors import CORSMiddleware
+
 from pydantic import BaseModel, Field
+
 from sqlalchemy import (
     create_engine,
     Column,
@@ -30,7 +32,7 @@ from sqlalchemy import (
     UniqueConstraint,
     or_,
 )
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session, selectinload
 from sqlalchemy.exc import IntegrityError
 
 # =========================
@@ -43,8 +45,11 @@ load_dotenv(env_path)
 # =========================
 # CONFIG DB
 # =========================
-DATABASE_URL = "sqlite:///./personas.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./personas.db")
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -80,66 +85,61 @@ class Observation(Base):
     person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
 
     person = relationship("Person", back_populates="observations")
-
     __table_args__ = (UniqueConstraint("person_id", "month", name="uix_person_month"),)
 
 
 Base.metadata.create_all(bind=engine)
 
 # =========================
-# Pydantic (v2)
+# Pydantic compat (v1/v2)
 # =========================
-class DNIIn(BaseModel):
+def _pydantic_compat_config():
+    # Pydantic v2: model_config
+    # Pydantic v1: class Config
+    class _Cfg:
+        orm_mode = True  # v1
+    return _Cfg
+
+class ORMBase(BaseModel):
+    # v2
+    model_config = {"from_attributes": True}
+    # v1
+    class Config(_pydantic_compat_config()):
+        pass
+
+class DNIIn(ORMBase):
     dni: str
 
-    class Config:
-        from_attributes = True
-
-
-class ObservationIn(BaseModel):
+class ObservationIn(ORMBase):
     month: int
-    text: str
+    text: str = ""
 
-    class Config:
-        from_attributes = True
-
-
-class PersonBase(BaseModel):
+class PersonBase(ORMBase):
     nombre: str
     apellido: str
     telefono: Optional[str] = ""
 
-
 class PersonCreate(PersonBase):
     dnis: List[DNIIn] = Field(default_factory=list)
-
 
 class PersonUpdate(PersonBase):
     dnis: List[DNIIn] = Field(default_factory=list)
 
-
 class PersonOut(PersonBase):
     id: int
-    dnis: List[DNIIn]
-    observations: List[ObservationIn]
-
-    class Config:
-        from_attributes = True
-
+    dnis: List[DNIIn] = Field(default_factory=list)
+    observations: List[ObservationIn] = Field(default_factory=list)
 
 class LoginIn(BaseModel):
     username: str
     password: str
 
-
 class LoginOut(BaseModel):
     token: str
-
 
 class ResetPasswordRequest(BaseModel):
     reset_token: str
     new_password: str
-
 
 # =========================
 # SEGURIDAD / LOGIN
@@ -151,14 +151,10 @@ RESET_MASTER_TOKEN = os.getenv("RESET_MASTER_TOKEN")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")  # opcional
 
 missing = []
-if not ADMIN_USER:
-    missing.append("ADMIN_USER")
-if not ADMIN_PASS_HASH:
-    missing.append("ADMIN_PASS_HASH")
-if not API_TOKEN:
-    missing.append("API_TOKEN")
-if not RESET_MASTER_TOKEN:
-    missing.append("RESET_MASTER_TOKEN")
+if not ADMIN_USER: missing.append("ADMIN_USER")
+if not ADMIN_PASS_HASH: missing.append("ADMIN_PASS_HASH")
+if not API_TOKEN: missing.append("API_TOKEN")
+if not RESET_MASTER_TOKEN: missing.append("RESET_MASTER_TOKEN")
 if missing:
     raise RuntimeError(f"Faltan variables de entorno críticas para seguridad: {', '.join(missing)}")
 
@@ -166,14 +162,11 @@ MAX_FAILED_ATTEMPTS = 5
 LOCK_TIME_SECONDS = 15 * 60
 FAILED_LOGINS: Dict[str, Dict] = {}
 
-
 def hash_password(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
-
 def verify_admin_password(raw: str) -> bool:
     return hash_password(raw) == ADMIN_PASS_HASH
-
 
 # =========================
 # APP
@@ -198,11 +191,9 @@ def get_db():
     finally:
         db.close()
 
-
 def require_token(x_token: str = Header(default="")):
     if x_token != API_TOKEN:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
-
 
 # =========================
 # HELPERS
@@ -222,18 +213,15 @@ MESES = {
     12: ["diciembre", "dic", "dec", "december"],
 }
 
-
 def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c).strip().lower() for c in df.columns]
     return df
-
 
 def get_col(df: pd.DataFrame, *names: str) -> Optional[str]:
     for n in names:
         if n in df.columns:
             return n
     return None
-
 
 def find_month_cols(df: pd.DataFrame) -> Dict[int, str]:
     month_cols = {}
@@ -244,20 +232,18 @@ def find_month_cols(df: pd.DataFrame) -> Dict[int, str]:
                 break
     return month_cols
 
-
 def ensure_12_observations(p: Person):
     existing = {o.month for o in p.observations}
     for m in range(1, 13):
         if m not in existing:
             p.observations.append(Observation(month=m, text=""))
 
-
 # =========================
 # LOGIN
 # =========================
 @app.post("/login", response_model=LoginOut)
 def login(data: LoginIn, request: Request):
-    client_ip = request.client.host
+    client_ip = request.client.host if request.client else "unknown"
     key = f"{client_ip}:{data.username}"
     now = time.time()
 
@@ -285,7 +271,6 @@ def login(data: LoginIn, request: Request):
 
     raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-
 @app.post("/admin/generar-hash-password")
 def generar_hash_password(body: ResetPasswordRequest):
     if body.reset_token != RESET_MASTER_TOKEN:
@@ -297,19 +282,18 @@ def generar_hash_password(body: ResetPasswordRequest):
         "new_password_hash": new_hash,
     }
 
-
 # =========================
-# CRUD / SEARCH (ORDEN CORRECTO)
+# CRUD / SEARCH
 # =========================
-
-# ✅ 1) SEARCH fijo primero
 @app.get("/persons/search", response_model=List[PersonOut], dependencies=[Depends(require_token)])
 def search_persons(q: str, limit: int = 50, db: Session = Depends(get_db)):
     q = q.strip()
     if not q:
         return []
-    return (
+
+    persons = (
         db.query(Person)
+        .options(selectinload(Person.dnis), selectinload(Person.observations))
         .outerjoin(DNI)
         .filter(
             or_(
@@ -322,23 +306,52 @@ def search_persons(q: str, limit: int = 50, db: Session = Depends(get_db)):
         .all()
     )
 
+    for p in persons:
+        ensure_12_observations(p)
+    db.commit()
+    for p in persons:
+        db.refresh(p)
 
-# ✅ 2) Buscar por DNI exacto (ruta fija)
+    # ✅ devolvemos ORM, FastAPI lo serializa con PersonOut (orm_mode/from_attributes)
+    return persons
+
 @app.get("/persons/by-dni", response_model=PersonOut, dependencies=[Depends(require_token)])
 def get_by_dni(dni: str = Query(...), db: Session = Depends(get_db)):
     dni = dni.strip()
-    d = db.query(DNI).filter(DNI.dni == dni).first()
+    d = (
+        db.query(DNI)
+        .options(
+            selectinload(DNI.person).selectinload(Person.dnis),
+            selectinload(DNI.person).selectinload(Person.observations),
+        )
+        .filter(DNI.dni == dni)
+        .first()
+    )
     if not d:
         raise HTTPException(404, "Persona no encontrada")
+
+    ensure_12_observations(d.person)
+    db.commit()
+    db.refresh(d.person)
     return d.person
 
-
-# ✅ 3) Listado paginado (no trae “todo” de golpe)
 @app.get("/persons", response_model=List[PersonOut], dependencies=[Depends(require_token)])
 def list_persons(skip: int = 0, limit: int = 200, db: Session = Depends(get_db)):
-    limit = max(1, min(limit, 2000))  # techo para no matar el server
-    return db.query(Person).offset(skip).limit(limit).all()
+    persons = (
+        db.query(Person)
+        .options(selectinload(Person.dnis), selectinload(Person.observations))
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
+    for p in persons:
+        ensure_12_observations(p)
+    db.commit()
+    for p in persons:
+        db.refresh(p)
+
+    return persons
 
 @app.post("/persons", response_model=PersonOut, status_code=201, dependencies=[Depends(require_token)])
 def create_person(payload: PersonCreate, db: Session = Depends(get_db)):
@@ -352,17 +365,12 @@ def create_person(payload: PersonCreate, db: Session = Depends(get_db)):
     existing_dni = db.query(DNI).filter(DNI.dni == dni_principal).first()
 
     if existing_dni:
-        # actualizar persona existente
         p = existing_dni.person
 
-        if payload.nombre:
-            p.nombre = payload.nombre.strip()
-        if payload.apellido:
-            p.apellido = payload.apellido.strip()
-        if payload.telefono is not None:
-            p.telefono = (payload.telefono or "").strip()
+        p.nombre = payload.nombre.strip()
+        p.apellido = payload.apellido.strip()
+        p.telefono = (payload.telefono or "").strip()
 
-        # agregar DNIs adicionales (si no existen)
         for dni_in in payload.dnis[1:]:
             dni_norm = dni_in.dni.strip()
             if not dni_norm:
@@ -372,14 +380,13 @@ def create_person(payload: PersonCreate, db: Session = Depends(get_db)):
                     p.dnis.append(DNI(dni=dni_norm))
                     db.flush()
                 except IntegrityError:
-                    db.rollback()  # ese DNI ya existe en otra persona → se ignora
+                    db.rollback()  # DNI ya existe en otra persona => lo ignoramos
 
         ensure_12_observations(p)
         db.commit()
         db.refresh(p)
         return p
 
-    # crear persona nueva
     p = Person(
         nombre=payload.nombre.strip(),
         apellido=payload.apellido.strip(),
@@ -388,9 +395,8 @@ def create_person(payload: PersonCreate, db: Session = Depends(get_db)):
 
     for dni_in in payload.dnis:
         dni_norm = dni_in.dni.strip()
-        if not dni_norm:
-            continue
-        p.dnis.append(DNI(dni=dni_norm))
+        if dni_norm:
+            p.dnis.append(DNI(dni=dni_norm))
 
     ensure_12_observations(p)
 
@@ -403,22 +409,30 @@ def create_person(payload: PersonCreate, db: Session = Depends(get_db)):
     db.refresh(p)
     return p
 
-
-# ✅ 4) Ruta dinámica al final (para que no capture 'search')
 @app.get("/persons/{person_id}", response_model=PersonOut, dependencies=[Depends(require_token)])
 def get_person(person_id: int, db: Session = Depends(get_db)):
-    p = db.query(Person).filter(Person.id == person_id).first()
+    p = (
+        db.query(Person)
+        .options(selectinload(Person.dnis), selectinload(Person.observations))
+        .filter(Person.id == person_id)
+        .first()
+    )
     if not p:
         raise HTTPException(404, "Persona no encontrada")
+
     ensure_12_observations(p)
     db.commit()
     db.refresh(p)
     return p
 
-
 @app.put("/persons/{person_id}", response_model=PersonOut, dependencies=[Depends(require_token)])
 def update_person(person_id: int, payload: PersonUpdate, db: Session = Depends(get_db)):
-    p = db.query(Person).filter(Person.id == person_id).first()
+    p = (
+        db.query(Person)
+        .options(selectinload(Person.dnis), selectinload(Person.observations))
+        .filter(Person.id == person_id)
+        .first()
+    )
     if not p:
         raise HTTPException(404, "Persona no encontrada")
 
@@ -426,13 +440,12 @@ def update_person(person_id: int, payload: PersonUpdate, db: Session = Depends(g
     p.apellido = payload.apellido.strip()
     p.telefono = (payload.telefono or "").strip()
 
-    # reemplazar DNIs
+    # Reemplazar DNIs (cuidado con duplicados globales)
     p.dnis.clear()
     for dni_in in payload.dnis:
         dni_norm = dni_in.dni.strip()
-        if not dni_norm:
-            continue
-        p.dnis.append(DNI(dni=dni_norm))
+        if dni_norm:
+            p.dnis.append(DNI(dni=dni_norm))
 
     ensure_12_observations(p)
 
@@ -444,7 +457,6 @@ def update_person(person_id: int, payload: PersonUpdate, db: Session = Depends(g
     db.refresh(p)
     return p
 
-
 @app.delete("/persons/{person_id}", status_code=204, dependencies=[Depends(require_token)])
 def delete_person(person_id: int, db: Session = Depends(get_db)):
     p = db.query(Person).filter(Person.id == person_id).first()
@@ -454,13 +466,17 @@ def delete_person(person_id: int, db: Session = Depends(get_db)):
     db.commit()
     return
 
-
 # =========================
 # OBSERVACIONES
 # =========================
 @app.put("/persons/{person_id}/observations", response_model=PersonOut, dependencies=[Depends(require_token)])
 def update_observations(person_id: int, payload: List[ObservationIn], db: Session = Depends(get_db)):
-    p = db.query(Person).filter(Person.id == person_id).first()
+    p = (
+        db.query(Person)
+        .options(selectinload(Person.dnis), selectinload(Person.observations))
+        .filter(Person.id == person_id)
+        .first()
+    )
     if not p:
         raise HTTPException(404, "Persona no encontrada")
 
@@ -472,22 +488,20 @@ def update_observations(person_id: int, payload: List[ObservationIn], db: Sessio
     existing_by_month = {o.month: o for o in p.observations}
 
     for obs_in in payload:
-        existing_by_month[obs_in.month].text = obs_in.text or ""
+        existing_by_month[obs_in.month].text = (obs_in.text or "")
 
     db.commit()
     db.refresh(p)
     return p
 
-
 # =========================
-# IMPORT CSV/EXCEL (RÁPIDO Y SIN DUPLICAR)
+# IMPORT CSV/EXCEL
 # =========================
 @app.post("/import-personas", dependencies=[Depends(require_token)])
 async def import_personas(file: UploadFile = File(...), db: Session = Depends(get_db)):
     filename = (file.filename or "").lower()
     raw = await file.read()
 
-    # 1) leer archivo
     if filename.endswith(".csv"):
         df = pd.read_csv(io.BytesIO(raw), sep=None, engine="python")
     elif filename.endswith(".xls") or filename.endswith(".xlsx"):
@@ -511,10 +525,8 @@ async def import_personas(file: UploadFile = File(...), db: Session = Depends(ge
     actualizadas = 0
     saltadas = 0
 
-    # 2) cache: traer DNIs existentes de una (mejora MUCHO velocidad)
     existing = {d.dni: d for d in db.query(DNI).all()}
 
-    # 3) iterar filas
     for _, row in df.iterrows():
         nombre = str(row.get(col_nombre) or "").strip()
         apellido = str(row.get(col_apellido) or "").strip()
@@ -531,7 +543,6 @@ async def import_personas(file: UploadFile = File(...), db: Session = Depends(ge
             p = d_exist.person
             actualizadas += 1
 
-            # completar sólo si está vacío
             if (not p.nombre or not p.nombre.strip()) and nombre:
                 p.nombre = nombre
             if (not p.apellido or not p.apellido.strip()) and apellido:
@@ -546,9 +557,7 @@ async def import_personas(file: UploadFile = File(...), db: Session = Depends(ge
             db.add(p)
             creadas += 1
 
-            # actualizar cache para próximas filas
             db.flush()
-            # buscar el dni recién insertado
             d_new = next((d for d in p.dnis if d.dni == dni), None)
             if d_new:
                 existing[dni] = d_new
@@ -556,7 +565,6 @@ async def import_personas(file: UploadFile = File(...), db: Session = Depends(ge
         ensure_12_observations(p)
         by_month = {o.month: o for o in p.observations}
 
-        # actualizar meses si viene valor (solo completa si está vacío)
         for month_num, col_name in month_cols.items():
             value = row.get(col_name)
             if pd.isna(value) or str(value).strip() == "":
