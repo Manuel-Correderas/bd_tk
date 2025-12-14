@@ -6,7 +6,7 @@ import streamlit as st
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8001").rstrip("/")
 
 st.set_page_config(page_title="Personas - Home", layout="wide")
-st.error("🔥 ESTE ES EL ARCHIVO NUEVO — SI VES ESTO, ESTÁS EN EL CÓDIGO CORRECTO")
+
 if "token" not in st.session_state:
     st.session_state["token"] = None
 
@@ -63,7 +63,7 @@ with st.sidebar:
             st.session_state["token"] = None
             st.rerun()
 
-# LOGIN (si no hay token)
+# LOGIN
 if not st.session_state.get("token"):
     st.info("Iniciá sesión para habilitar las páginas: Listado / Crear-Editar / Importar.")
 
