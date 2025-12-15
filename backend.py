@@ -90,7 +90,12 @@ class Observation(Base):
 app = FastAPI(title="Backend Personas + Observaciones")
 @app.on_event("startup")
 def on_startup():
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✅ DB OK: tablas creadas/verificadas")
+    except Exception as e:
+        print(f"❌ DB ERROR en startup: {e}")
+
 
 app.add_middleware(
     CORSMiddleware,

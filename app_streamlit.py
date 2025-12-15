@@ -1,10 +1,13 @@
-# app_streamlit.py
 import os
 import requests
 import streamlit as st
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./personas.db")
+# 🔐 DEFINICIÓN BLINDADA
+BACKEND_URL = os.environ.get("BACKEND_URL")
+if not BACKEND_URL:
+    BACKEND_URL = "http://127.0.0.1:8001"
 
+BACKEND_URL = BACKEND_URL.rstrip("/")
 
 st.set_page_config(page_title="Personas - Home", layout="wide")
 
