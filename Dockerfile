@@ -18,4 +18,4 @@ COPY pages ./pages
 
 EXPOSE 8501 8001
 
-CMD ["bash", "-lc", "uvicorn backend:app --host 0.0.0.0 --port 8001 & streamlit run app_streamlit.py --server.address=0.0.0.0 --server.port=8501"]
+CMD ["bash", "-lc", "uvicorn backend:app --host 0.0.0.0 --port 8001 & streamlit run app_streamlit.py --server.address=0.0.0.0 --server.port=8501 --server.fileWatcherType none --server.runOnSave false"]
