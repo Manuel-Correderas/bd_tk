@@ -1,8 +1,12 @@
+##BBDD_TURKIA/backend.py
+
 import os
 import io
 import time
 import hashlib
 from typing import List, Optional, Dict
+from db import engine, SessionLocal, Base
+
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -45,13 +49,7 @@ load_dotenv(env_path)
 # =========================
 # CONFIG DB
 # =========================
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./personas.db")
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base = declarative_base()
+
 
 # =========================
 # MODELOS SQLALCHEMY

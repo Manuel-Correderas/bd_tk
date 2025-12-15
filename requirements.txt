@@ -8,6 +8,7 @@ requests==2.31.0
 
 psycopg2-binary==2.9.9
 
+
 # --- STREAMLIT APP ---
 streamlit==1.33.0
 
