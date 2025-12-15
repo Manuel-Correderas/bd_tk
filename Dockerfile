@@ -16,6 +16,6 @@ COPY backend.py .
 COPY app_streamlit.py .
 COPY pages ./pages
 
-EXPOSE 8501 8001
+EXPOSE 10000
 
-CMD ["uvicorn", "backend:app", "--host", "0.0.0.0", "--port", "$PORT"]
+CMD sh -c "uvicorn backend:app --host 0.0.0.0 --port ${PORT:-10000}"
