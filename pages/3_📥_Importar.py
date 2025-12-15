@@ -3,7 +3,8 @@ import os
 import requests
 import streamlit as st
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8001").rstrip("/")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./personas.db")
+
 
 
 st.set_page_config(page_title="Importar", layout="wide")

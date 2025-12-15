@@ -3,12 +3,13 @@ import os
 import requests
 import streamlit as st
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8001").rstrip("/")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./personas.db")
+
 
 st.set_page_config(page_title="Personas - Home", layout="wide")
 
 if "token" not in st.session_state:
-    st.session_state["token"] = None
+    st.session_state["token"] = None  # <- correcto
 
 def auth_headers():
     t = st.session_state.get("token")
@@ -40,7 +41,6 @@ def request_get(url, **kwargs):
         return None
 
 st.title("🏠 Personas — Inicio")
-
 
 # LOGIN
 if not st.session_state.get("token"):
