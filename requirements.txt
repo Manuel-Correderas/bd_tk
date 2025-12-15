@@ -5,7 +5,8 @@ sqlalchemy==2.0.30
 pydantic==1.10.13
 python-multipart==0.0.9
 requests==2.31.0
-psycopg[binary]>=3.1
+
+psycopg[binary]==3.3.2
 
 # --- STREAMLIT APP ---
 streamlit==1.33.0
