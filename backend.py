@@ -87,11 +87,18 @@ class Observation(Base):
     person = relationship("Person", back_populates="observations")
     __table_args__ = (UniqueConstraint("person_id", "month", name="uix_person_month"),)
 
-
+app = FastAPI(title="Backend Personas + Observaciones")
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # =========================
 # Pydantic compat (v1/v2)
@@ -174,7 +181,7 @@ def verify_admin_password(raw: str) -> bool:
 # =========================
 # APP
 # =========================
-app = FastAPI(title="Backend Personas + Observaciones")
+
 
 app.add_middleware(
     CORSMiddleware,
