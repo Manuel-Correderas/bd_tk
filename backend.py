@@ -88,7 +88,10 @@ class Observation(Base):
     __table_args__ = (UniqueConstraint("person_id", "month", name="uix_person_month"),)
 
 
-Base.metadata.create_all(bind=engine)
+@app.on_event("startup")
+def on_startup():
+    Base.metadata.create_all(bind=engine)
+
 
 # =========================
 # Pydantic compat (v1/v2)
