@@ -8,6 +8,7 @@ from typing import List, Optional, Dict
 from db import engine, SessionLocal, Base
 
 
+
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -93,6 +94,7 @@ def on_startup():
         print("✅ DB OK: tablas creadas/verificadas")
     except Exception as e:
         print(f"❌ DB ERROR en startup: {e}")
+        raise
 
 
 app.add_middleware(
